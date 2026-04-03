@@ -9,6 +9,8 @@ export default function App() {
   const leftPanelWidth = usePlannerStore((state) => state.leftPanelWidth);
   const setLeftPanelWidth = usePlannerStore((state) => state.setLeftPanelWidth);
   const resetToSample = usePlannerStore((state) => state.resetToSample);
+  const addTaskAfterSelected = usePlannerStore((state) => state.addTaskAfterSelected);
+  const removeSelectedTask = usePlannerStore((state) => state.removeSelectedTask);
 
   const dividerDragRef = useRef<{
     startX: number;
@@ -18,12 +20,10 @@ export default function App() {
   const handleWindowMouseMove = useCallback(
     (event: MouseEvent) => {
       const dragState = dividerDragRef.current;
-      if (!dragState) {
-        return;
-      }
+      if (!dragState) return;
 
       const delta = event.clientX - dragState.startX;
-      const nextWidth = Math.max(520, Math.min(1120, dragState.startWidth + delta));
+      const nextWidth = Math.max(560, Math.min(1180, dragState.startWidth + delta));
       setLeftPanelWidth(nextWidth);
     },
     [setLeftPanelWidth]
@@ -80,7 +80,7 @@ export default function App() {
 
           <div>
             <h1>ObraFlow Planner</h1>
-            <p>Planejamento de obras com Gantt interativo</p>
+            <p>Mockup SaaS de planejamento de obras com Gantt interativo</p>
           </div>
         </div>
 
@@ -90,11 +90,27 @@ export default function App() {
           </button>
 
           <button className="btn ghost" type="button">
-            Calendário BR
+            Exportar PDF
           </button>
 
-          <button className="btn primary" type="button" onClick={resetToSample}>
-            Resetar mock
+          <button className="btn ghost" type="button">
+            Baseline
+          </button>
+
+          <button className="btn primary" type="button" onClick={() => addTaskAfterSelected('task')}>
+            + Nova tarefa
+          </button>
+
+          <button className="btn ghost" type="button" onClick={() => addTaskAfterSelected('milestone')}>
+            + Marco
+          </button>
+
+          <button className="btn ghost danger" type="button" onClick={removeSelectedTask}>
+            Remover
+          </button>
+
+          <button className="btn ghost" type="button" onClick={resetToSample}>
+            Resetar
           </button>
         </div>
       </header>
@@ -102,8 +118,7 @@ export default function App() {
       <section className="hero">
         <div className="hero-card">
           <div>
-            <div className="hero-badge">Projeto ativo</div>
-            <h2>{snapshot.project.name}</h2>
+            <h2>Planejamento executivo — {snapshot.project.name}</h2>
             <p>
               Estrutura profissional com suporte a dependências (FS, SS, FF, SF),
               cálculo automático de datas, caminho crítico e visual premium.

@@ -8,6 +8,8 @@ import {
 } from '@/modules/planner/domain/services/working-days-engine';
 
 const ROW_HEIGHT = 44;
+const SUMMARY_BAR_HEIGHT = 12;
+const TASK_BAR_HEIGHT = 22;
 
 function parseIsoDate(value: string): Date {
   const [year, month, day] = value.split('-').map(Number);
@@ -50,7 +52,7 @@ function getVisibleRange(tasks: Task[]) {
     const today = new Date();
     return {
       start: addDays(today, -7),
-      end: addDays(today, 60),
+      end: addDays(today, 120),
     };
   }
 
@@ -64,7 +66,7 @@ function getVisibleRange(tasks: Task[]) {
 
   return {
     start: addDays(starts[0], -3),
-    end: addDays(ends[ends.length - 1], 14),
+    end: addDays(ends[ends.length - 1], 35),
   };
 }
 
@@ -158,6 +160,7 @@ export function GanttBoard() {
   const setSelectedTaskId = usePlannerStore((state) => state.setSelectedTaskId);
   const updateTask = usePlannerStore((state) => state.updateTask);
   const zoom = usePlannerStore((state) => state.zoom);
+  const setZoom = usePlannerStore((state) => state.setZoom);
   const scrollTop = usePlannerStore((state) => state.scrollTop);
   const setScrollTop = usePlannerStore((state) => state.setScrollTop);
 
@@ -181,9 +184,7 @@ export function GanttBoard() {
   );
 
   useEffect(() => {
-    if (!bodyRef.current) {
-      return;
-    }
+    if (!bodyRef.current) return;
 
     if (Math.abs(bodyRef.current.scrollTop - scrollTop) > 1) {
       bodyRef.current.scrollTop = scrollTop;
@@ -191,9 +192,7 @@ export function GanttBoard() {
   }, [scrollTop]);
 
   useEffect(() => {
-    if (!dragState) {
-      return;
-    }
+    if (!dragState) return;
 
     const handleMouseMove = (event: MouseEvent) => {
       const deltaX = event.clientX - dragState.startX;
@@ -235,7 +234,7 @@ export function GanttBoard() {
               ? nextStart
               : addWorkingDays(
                   nextStart,
-                  dragState.durationDays,
+                  Math.max(1, dragState.durationDays),
                   snapshot.calendar,
                   snapshot.holidays
                 );
@@ -246,7 +245,7 @@ export function GanttBoard() {
           });
         }
 
-        if (dragState.mode === 'resize-right' && snappedDays !== 0) {
+        if (dragState.mode === 'resize-right' && snappedDays !== 0 && task.type === 'task') {
           const nextDuration = Math.max(1, dragState.durationDays + snappedDays);
           const nextEnd = addWorkingDays(
             dragState.startDate,
@@ -287,9 +286,7 @@ export function GanttBoard() {
       const sourceIndex = tasks.findIndex((task) => task.id === dependency.sourceTaskId);
       const targetIndex = tasks.findIndex((task) => task.id === dependency.targetTaskId);
 
-      if (sourceIndex < 0 || targetIndex < 0) {
-        return;
-      }
+      if (sourceIndex < 0 || targetIndex < 0) return;
 
       const sourceTask = tasks[sourceIndex];
       const targetTask = tasks[targetIndex];
@@ -302,9 +299,7 @@ export function GanttBoard() {
         zoom
       );
 
-      if (!path) {
-        return;
-      }
+      if (!path) return;
 
       rows.push({
         id: dependency.id,
@@ -322,27 +317,13 @@ export function GanttBoard() {
         <h3>Gráfico de Gantt</h3>
 
         <div className="gantt-toolbar">
-          <button
-            className="chip"
-            type="button"
-            onClick={() => usePlannerStore.getState().setZoom(28)}
-          >
+          <button className={zoom === 28 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(28)}>
             Compacto
           </button>
-
-          <button
-            className="chip active"
-            type="button"
-            onClick={() => usePlannerStore.getState().setZoom(36)}
-          >
+          <button className={zoom === 36 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(36)}>
             Padrão
           </button>
-
-          <button
-            className="chip"
-            type="button"
-            onClick={() => usePlannerStore.getState().setZoom(52)}
-          >
+          <button className={zoom === 52 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(52)}>
             Detalhado
           </button>
         </div>
@@ -388,6 +369,12 @@ export function GanttBoard() {
         <div
           ref={bodyRef}
           className="gantt-body"
+          onWheel={(event) => {
+            if (event.ctrlKey) {
+              event.preventDefault();
+              setZoom(zoom + (event.deltaY < 0 ? 4 : -4));
+            }
+          }}
           onScroll={(event) => {
             setScrollTop(event.currentTarget.scrollTop);
 
@@ -402,10 +389,7 @@ export function GanttBoard() {
           >
             {Array.from({ length: totalDays }).map((_, index) => {
               const date = addDays(range.start, index);
-
-              if (!isWeekend(date)) {
-                return null;
-              }
+              if (!isWeekend(date)) return null;
 
               return (
                 <div
@@ -475,22 +459,19 @@ export function GanttBoard() {
             ) : null}
 
             {tasks.map((task, rowIndex) => {
-              if (!task.startDate || !task.endDate) {
-                return null;
-              }
+              if (!task.startDate || !task.endDate) return null;
 
               const metrics = getBarMetrics(task, range.start, zoom);
               const barPreview = preview?.taskId === task.id ? preview : null;
               const left = barPreview ? barPreview.left : metrics.left;
               const width = barPreview ? barPreview.width : metrics.width;
-              
-              const isSummary = task.type === 'summary';
-              const top = rowIndex * ROW_HEIGHT + (isSummary ? 16 : 8);
-              const height = isSummary ? 16 : 28;
+
+              const barHeight = task.type === 'summary' ? SUMMARY_BAR_HEIGHT : TASK_BAR_HEIGHT;
+              const top = rowIndex * ROW_HEIGHT + (ROW_HEIGHT - barHeight) / 2;
 
               const classNames = [
                 'gantt-bar',
-                isSummary ? 'summary' : '',
+                task.type === 'summary' ? 'summary' : '',
                 task.isCritical ? 'critical' : '',
                 selectedTaskId === task.id ? 'selected' : '',
                 dragState?.taskId === task.id ? 'dragging' : '',
@@ -502,7 +483,7 @@ export function GanttBoard() {
                 <div
                   key={task.id}
                   className="gantt-bar-wrap"
-                  style={{ left: `${left}px`, width: `${width}px`, top: `${top}px`, height: `${height}px` }}
+                  style={{ left: `${left}px`, width: `${width}px`, top: `${top}px`, height: `${barHeight}px` }}
                 >
                   <span className="gantt-bar-id">{task.wbsCode}</span>
 
@@ -513,7 +494,7 @@ export function GanttBoard() {
                     tabIndex={0}
                     onClick={() => setSelectedTaskId(task.id)}
                     onMouseDown={(event) => {
-                      if (isSummary) {
+                      if (task.type === 'summary') {
                         setSelectedTaskId(task.id);
                         return;
                       }
@@ -539,26 +520,19 @@ export function GanttBoard() {
                       });
                     }}
                   >
-                    <div
-                      className="gantt-bar-progress"
-                      style={{
-                        width: `${Math.max(0, Math.min(100, task.progressPercent))}%`,
-                      }}
-                    />
+                    {task.type !== 'summary' ? (
+                      <div
+                        className="gantt-bar-progress"
+                        style={{
+                          width: `${Math.max(0, Math.min(100, task.progressPercent))}%`,
+                        }}
+                      />
+                    ) : null}
 
-                    {isSummary ? (
-                      <>
-                        <div className="summary-delimiter start" />
-                        <div className="summary-delimiter end" />
-                      </>
-                    ) : (
-                      <>
-                        <span className="gantt-connector start" />
-                        <span className="gantt-connector end" />
-                      </>
-                    )}
+                    <span className="gantt-connector start" />
+                    <span className="gantt-connector end" />
 
-                    {!isSummary && task.type === 'task' ? (
+                    {task.type === 'task' ? (
                       <div
                         className="gantt-resize-handle"
                         aria-label="Redimensionar duração"
