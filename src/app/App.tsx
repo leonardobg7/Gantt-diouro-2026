@@ -1,85 +1,87 @@
-import { useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { GanttBoard } from '@/components/gantt/gantt-board';
 import { TaskTable } from '@/components/table/task-table';
 import { usePlannerStore } from '@/modules/planner/state/planner-store';
-import { importXlsxFile } from '@/modules/planner/infrastructure/importers/xlsx-importer';
-import { convertImportedToSnapshot } from '@/modules/planner/domain/services/import-engine';
 
 export default function App() {
   const snapshot = usePlannerStore((state) => state.snapshot);
+  const leftPanelWidth = usePlannerStore((state) => state.leftPanelWidth);
+  const setLeftPanelWidth = usePlannerStore((state) => state.setLeftPanelWidth);
   const resetToSample = usePlannerStore((state) => state.resetToSample);
-  const replaceSnapshot = usePlannerStore((state) => state.replaceSnapshot);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const stats = useMemo(() => {
-    const leafTasks = snapshot.tasks.filter((task) => task.type !== 'summary');
-    const criticalTasks = leafTasks.filter((task) => task.isCritical);
-    const progressBase =
-      leafTasks.length > 0
-        ? Math.round(
-            leafTasks.reduce((sum, task) => sum + task.progressPercent, 0) /
-              leafTasks.length
-          )
-        : 0;
+  const dragStateRef = useRef<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
-    return {
-      taskCount: leafTasks.length,
-      criticalCount: criticalTasks.length,
-      averageProgress: progressBase,
+  const handleMouseMove = useCallback(
+    (event: MouseEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState) {
+        return;
+      }
+
+      const delta = event.clientX - dragState.startX;
+      const nextWidth = Math.max(420, Math.min(920, dragState.startWidth + delta));
+      setLeftPanelWidth(nextWidth);
+    },
+    [setLeftPanelWidth]
+  );
+
+  const handleMouseUp = useCallback(() => {
+    dragStateRef.current = null;
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('mouseup', handleMouseUp);
+  }, [handleMouseMove]);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [snapshot.tasks]);
+  }, [handleMouseMove, handleMouseUp]);
 
-  const handleImportXlsx = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleDividerMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragStateRef.current = {
+      startX: event.clientX,
+      startWidth: leftPanelWidth,
+    };
 
-    try {
-      const result = await importXlsxFile(file);
-      if (result.errors.length > 0) {
-        alert('Erros na importação:\n' + result.errors.join('\n'));
-      }
-      
-      if (result.rows.length > 0) {
-        const nextSnapshot = convertImportedToSnapshot(snapshot.project, result.rows);
-        replaceSnapshot(nextSnapshot);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Falha ao processar arquivo XLSX.');
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
+
+  const leafTasks = snapshot.tasks.filter((task) => task.type !== 'summary');
+  const criticalCount = leafTasks.filter((task) => task.isCritical).length;
+  const avgProgress =
+    leafTasks.length > 0
+      ? Math.round(
+          leafTasks.reduce((sum, task) => sum + task.progressPercent, 0) / leafTasks.length
+        )
+      : 0;
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">OF</div>
+
           <div>
             <h1>ObraFlow Planner</h1>
-            <p>Planejamento de obras com visual premium inspirado em MS Project</p>
+            <p>Planejamento de obras com Gantt interativo</p>
           </div>
         </div>
 
         <div className="toolbar">
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleImportXlsx}
-            accept=".xlsx,.xls"
-            style={{ display: 'none' }}
-          />
-          <button 
-            className="btn ghost" 
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-          >
+          <button className="btn ghost" type="button">
             Importar XLSX
           </button>
+
           <button className="btn ghost" type="button">
             Calendário BR
           </button>
+
           <button className="btn primary" type="button" onClick={resetToSample}>
             Resetar mock
           </button>
@@ -89,33 +91,51 @@ export default function App() {
       <section className="hero">
         <div className="hero-card">
           <div>
-            <div className="hero-badge">Projeto Ativo</div>
+            <div className="hero-badge">Projeto ativo</div>
             <h2>{snapshot.project.name}</h2>
             <p>
-              Estrutura profissional com suporte a dependências (FS, SS, FF, SF),
-              cálculo automático de datas, caminho crítico e visual premium.
+              Cronograma executivo com hierarquia, dias úteis, predecessoras, caminho
+              crítico e visual premium em tema dark-blue.
             </p>
           </div>
 
           <div className="hero-stats">
             <div className="stat-card">
               <span>Tarefas</span>
-              <strong>{stats.taskCount}</strong>
+              <strong>{leafTasks.length}</strong>
             </div>
+
             <div className="stat-card">
               <span>Críticas</span>
-              <strong>{stats.criticalCount}</strong>
+              <strong>{criticalCount}</strong>
             </div>
+
             <div className="stat-card">
-              <span>Progresso</span>
-              <strong>{stats.averageProgress}%</strong>
+              <span>Avanço</span>
+              <strong>{avgProgress}%</strong>
             </div>
           </div>
         </div>
       </section>
 
-      <main className="planner-shell">
+      <main
+        className="planner-shell"
+        style={
+          {
+            '--left-panel-width': `${leftPanelWidth}px`,
+          } as React.CSSProperties
+        }
+      >
         <TaskTable />
+
+        <div
+          className="planner-divider"
+          onMouseDown={handleDividerMouseDown}
+          role="separator"
+          aria-label="Redimensionar tabela e Gantt"
+          aria-orientation="vertical"
+        />
+
         <GanttBoard />
       </main>
     </div>

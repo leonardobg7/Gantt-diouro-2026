@@ -1,20 +1,15 @@
-import { useMemo, useState, useCallback, useEffect } from 'react';
-import type { Task } from '@/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Dependency, Task } from '@/types';
 import { sortTasksByHierarchy } from '@/modules/planner/domain/services/hierarchy-engine';
 import { usePlannerStore } from '@/modules/planner/state/planner-store';
-import { addWorkingDays, shiftWorkingDate } from '@/modules/planner/domain/services/working-days-engine';
+import {
+  addWorkingDays,
+  shiftWorkingDate,
+} from '@/modules/planner/domain/services/working-days-engine';
 
 function parseIsoDate(value: string): Date {
-  const parts = value.split('-').map(Number);
-  return new Date(parts[0] || 2000, (parts[1] || 1) - 1, parts[2] || 1, 12, 0, 0, 0);
-}
-
-function formatDayNumber(value: Date): string {
-  return String(value.getDate()).padStart(2, '0');
-}
-
-function formatDayLabel(value: Date): string {
-  return value.toLocaleDateString('pt-BR', { weekday: 'short' }).slice(0, 3);
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year || 2000, (month || 1) - 1, day || 1, 12, 0, 0, 0);
 }
 
 function addDays(value: Date, amount: number): Date {
@@ -34,14 +29,27 @@ function isWeekend(value: Date): boolean {
   return day === 0 || day === 6;
 }
 
+function formatDayNumber(value: Date): string {
+  return String(value.getDate()).padStart(2, '0');
+}
+
+function formatDayLabel(value: Date): string {
+  return value.toLocaleDateString('pt-BR', { weekday: 'short' }).slice(0, 3);
+}
+
+function formatMonthLabel(value: Date): string {
+  return value.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+}
+
 function getVisibleRange(tasks: Task[]) {
   const datedTasks = tasks.filter((task) => task.startDate && task.endDate);
 
   if (datedTasks.length === 0) {
     const today = new Date();
-    const start = addDays(today, -7);
-    const end = addDays(today, 30);
-    return { start, end };
+    return {
+      start: addDays(today, -7),
+      end: addDays(today, 60),
+    };
   }
 
   const starts = datedTasks
@@ -53,211 +61,339 @@ function getVisibleRange(tasks: Task[]) {
     .sort((a, b) => a.getTime() - b.getTime());
 
   return {
-    start: addDays(starts[0], -2),
+    start: addDays(starts[0], -3),
     end: addDays(ends[ends.length - 1], 14),
   };
 }
 
-interface GanttBarProps {
-  task: Task;
-  rowIndex: number;
-  range: { start: Date; end: Date };
-  zoom: number;
-  isSelected: boolean;
-  onSelect: (id: string) => void;
+function buildMonthSegments(start: Date, totalDays: number, zoom: number) {
+  const segments: Array<{ label: string; width: number }> = [];
+  let currentMonth = -1;
+  let currentYear = -1;
+  let currentWidth = 0;
+  let currentLabel = '';
+
+  for (let index = 0; index < totalDays; index += 1) {
+    const date = addDays(start, index);
+    const month = date.getMonth();
+    const year = date.getFullYear();
+
+    if (month !== currentMonth || year !== currentYear) {
+      if (currentWidth > 0) {
+        segments.push({
+          label: currentLabel,
+          width: currentWidth,
+        });
+      }
+
+      currentMonth = month;
+      currentYear = year;
+      currentLabel = formatMonthLabel(date);
+      currentWidth = zoom;
+    } else {
+      currentWidth += zoom;
+    }
+  }
+
+  if (currentWidth > 0) {
+    segments.push({
+      label: currentLabel,
+      width: currentWidth,
+    });
+  }
+
+  return segments;
 }
 
-function GanttBar({ task, rowIndex, range, zoom, isSelected, onSelect }: GanttBarProps) {
-  const updateTask = usePlannerStore((state) => state.updateTask);
-  const snapshot = usePlannerStore((state) => state.snapshot);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [visualLeft, setVisualLeft] = useState(0);
-  const [visualWidth, setVisualWidth] = useState(0);
+type DragMode = 'move' | 'resize-right';
 
-  const calculateInitial = useCallback(() => {
-    if (!task.startDate || !task.endDate) return { left: 0, width: 0 };
-    const start = parseIsoDate(task.startDate);
-    const end = parseIsoDate(task.endDate);
-    const left = diffInDays(range.start, start) * zoom + 3;
-    const width = Math.max(zoom - 6, (diffInDays(start, end) + 1) * zoom - 6);
-    return { left, width };
-  }, [task.startDate, task.endDate, range.start, zoom]);
+interface DragState {
+  taskId: string;
+  mode: DragMode;
+  startX: number;
+  initialLeft: number;
+  initialWidth: number;
+  startDate: string;
+  durationDays: number;
+}
 
-  useEffect(() => {
-    if (!isDragging && !isResizing) {
-      const { left, width } = calculateInitial();
-      setVisualLeft(left);
-      setVisualWidth(width);
-    }
-  }, [calculateInitial, isDragging, isResizing]);
+function getBarMetrics(task: Task, rangeStart: Date, zoom: number) {
+  if (!task.startDate || !task.endDate) {
+    return { left: 0, width: 0 };
+  }
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (task.type === 'summary') return;
-    e.stopPropagation();
-    onSelect(task.id);
-    setIsDragging(true);
-    console.log('[GanttBar:drag-start]', task.id);
+  const start = parseIsoDate(task.startDate);
+  const end = parseIsoDate(task.endDate);
+  const left = diffInDays(rangeStart, start) * zoom + 4;
+  const width = Math.max(zoom - 8, (diffInDays(start, end) + 1) * zoom - 8);
 
-    const startX = e.pageX;
-    const initialLeft = visualLeft;
+  return { left, width };
+}
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.pageX - startX;
-      // Snap to zoom grid
-      const snappedDelta = Math.round(deltaX / zoom) * zoom;
-      setVisualLeft(initialLeft + snappedDelta);
-    };
+function buildDependencyPath(
+  sourceTask: Task,
+  targetTask: Task,
+  sourceIndex: number,
+  targetIndex: number,
+  rangeStart: Date,
+  zoom: number
+) {
+  if (!sourceTask.endDate || !targetTask.startDate) {
+    return null;
+  }
 
-    const handleMouseUp = (upEvent: MouseEvent) => {
-      setIsDragging(false);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+  const sourceEnd = parseIsoDate(sourceTask.endDate);
+  const targetStart = parseIsoDate(targetTask.startDate);
 
-      const deltaX = upEvent.pageX - startX;
-      const dayDelta = Math.round(deltaX / zoom);
-      
-      if (dayDelta !== 0 && task.startDate) {
-        const nextStart = shiftWorkingDate(task.startDate, dayDelta, snapshot.calendar, snapshot.holidays);
-        const nextEnd = addWorkingDays(nextStart, task.durationDays, snapshot.calendar, snapshot.holidays);
-        
-        console.log('[GanttBar:drag-end]', { taskId: task.id, dayDelta, nextStart, nextEnd });
-        updateTask(task.id, { startDate: nextStart, endDate: nextEnd });
-      }
-    };
+  const sourceMetrics = getBarMetrics(sourceTask, rangeStart, zoom);
+  const targetMetrics = getBarMetrics(targetTask, rangeStart, zoom);
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
+  const x1 = sourceMetrics.left + sourceMetrics.width;
+  const y1 = sourceIndex * 44 + 22;
+  const x2 = targetMetrics.left;
+  const y2 = targetIndex * 44 + 22;
+  const midX = x1 + Math.max(18, Math.min(72, (x2 - x1) / 2));
 
-  const handleResizeMouseDown = (e: React.MouseEvent) => {
-    if (task.type !== 'task') return;
-    e.stopPropagation();
-    setIsResizing(true);
-    console.log('[GanttBar:resize-start]', task.id);
+  const path = [
+    `M ${x1} ${y1}`,
+    `L ${midX} ${y1}`,
+    `L ${midX} ${y2}`,
+    `L ${x2 - 6} ${y2}`,
+  ].join(' ');
 
-    const startX = e.pageX;
-    const initialWidth = visualWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = moveEvent.pageX - startX;
-      const snappedWidth = Math.max(zoom - 6, initialWidth + Math.round(deltaX / zoom) * zoom);
-      setVisualWidth(snappedWidth);
-    };
-
-    const handleMouseUp = (upEvent: MouseEvent) => {
-      setIsResizing(false);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-
-      const deltaX = upEvent.pageX - startX;
-      const dayDelta = Math.round(deltaX / zoom);
-      
-      if (dayDelta !== 0 && task.startDate) {
-        const nextDuration = Math.max(1, task.durationDays + dayDelta);
-        const nextEnd = addWorkingDays(task.startDate, nextDuration, snapshot.calendar, snapshot.holidays);
-        
-        console.log('[GanttBar:resize-end]', { taskId: task.id, dayDelta, nextDuration, nextEnd });
-        updateTask(task.id, { durationDays: nextDuration, endDate: nextEnd });
-      }
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
-
-  const top = rowIndex * 40 + (task.type === 'summary' ? 14 : 9);
-
-  return (
-    <div
-      className={`gantt-bar ${task.type} ${task.isCritical ? 'critical' : ''} ${isSelected ? 'selected' : ''}`}
-      style={{
-        left: `${visualLeft}px`,
-        width: `${visualWidth}px`,
-        top: `${top}px`,
-      }}
-      onMouseDown={handleMouseDown}
-      data-type={task.type}
-    >
-      {task.type !== 'summary' && (
-        <div 
-          className="gantt-bar-progress" 
-          style={{ width: `${task.progressPercent}%` }} 
-        />
-      )}
-      <span className="gantt-bar-label">{task.name}</span>
-      {task.type === 'task' && (
-        <div className="bar-resize-handle" onMouseDown={handleResizeMouseDown} />
-      )}
-    </div>
-  );
+  return path;
 }
 
 export function GanttBoard() {
   const snapshot = usePlannerStore((state) => state.snapshot);
   const selectedTaskId = usePlannerStore((state) => state.selectedTaskId);
   const setSelectedTaskId = usePlannerStore((state) => state.setSelectedTaskId);
+  const updateTask = usePlannerStore((state) => state.updateTask);
   const zoom = usePlannerStore((state) => state.zoom);
+  const scrollTop = usePlannerStore((state) => state.scrollTop);
+  const setScrollTop = usePlannerStore((state) => state.setScrollTop);
 
-  const tasks = sortTasksByHierarchy(snapshot.tasks);
-  const range = getVisibleRange(tasks);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLDivElement | null>(null);
+
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [preview, setPreview] = useState<{ taskId: string; left: number; width: number } | null>(
+    null
+  );
+
+  const tasks = useMemo(() => sortTasksByHierarchy(snapshot.tasks), [snapshot.tasks]);
+  const range = useMemo(() => getVisibleRange(tasks), [tasks]);
+
   const totalDays = diffInDays(range.start, range.end) + 1;
   const canvasWidth = totalDays * zoom;
-  const canvasHeight = tasks.length * 40 + 20;
+  const canvasHeight = tasks.length * 44 + 20;
+  const monthSegments = useMemo(
+    () => buildMonthSegments(range.start, totalDays, zoom),
+    [range.start, totalDays, zoom]
+  );
+
+  useEffect(() => {
+    if (!bodyRef.current) {
+      return;
+    }
+
+    if (Math.abs(bodyRef.current.scrollTop - scrollTop) > 1) {
+      bodyRef.current.scrollTop = scrollTop;
+    }
+  }, [scrollTop]);
+
+  useEffect(() => {
+    if (!dragState) {
+      return;
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const deltaX = event.clientX - dragState.startX;
+      const snappedDelta = Math.round(deltaX / zoom) * zoom;
+
+      if (dragState.mode === 'move') {
+        setPreview({
+          taskId: dragState.taskId,
+          left: dragState.initialLeft + snappedDelta,
+          width: dragState.initialWidth,
+        });
+
+        return;
+      }
+
+      const nextWidth = Math.max(zoom - 8, dragState.initialWidth + snappedDelta);
+
+      setPreview({
+        taskId: dragState.taskId,
+        left: dragState.initialLeft,
+        width: nextWidth,
+      });
+    };
+
+    const handleMouseUp = (event: MouseEvent) => {
+      const deltaX = event.clientX - dragState.startX;
+      const snappedDays = Math.round(deltaX / zoom);
+      const task = tasks.find((item) => item.id === dragState.taskId);
+
+      if (task) {
+        if (dragState.mode === 'move' && snappedDays !== 0) {
+          const nextStart = shiftWorkingDate(
+            dragState.startDate,
+            snappedDays,
+            snapshot.calendar,
+            snapshot.holidays
+          );
+          const nextEnd =
+            task.type === 'milestone'
+              ? nextStart
+              : addWorkingDays(
+                  nextStart,
+                  dragState.durationDays,
+                  snapshot.calendar,
+                  snapshot.holidays
+                );
+
+          updateTask(task.id, {
+            startDate: nextStart,
+            endDate: nextEnd,
+          });
+        }
+
+        if (dragState.mode === 'resize-right' && snappedDays !== 0) {
+          const nextDuration = Math.max(1, dragState.durationDays + snappedDays);
+          const nextEnd = addWorkingDays(
+            dragState.startDate,
+            nextDuration,
+            snapshot.calendar,
+            snapshot.holidays
+          );
+
+          updateTask(task.id, {
+            durationDays: nextDuration,
+            endDate: nextEnd,
+          });
+        }
+      }
+
+      setDragState(null);
+      setPreview(null);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragState, snapshot.calendar, snapshot.holidays, tasks, updateTask, zoom]);
+
   const today = new Date();
   const todayOffset = diffInDays(range.start, today) * zoom;
 
   const arrows = useMemo(() => {
-    const lineData: { path: string; isCritical: boolean; id: string }[] = [];
-    
-    snapshot.dependencies.forEach((dep) => {
-      const sourceIndex = tasks.findIndex((t) => t.id === dep.sourceTaskId);
-      const targetIndex = tasks.findIndex((t) => t.id === dep.targetTaskId);
-      
-      if (sourceIndex === -1 || targetIndex === -1) return;
-      
+    const dependencyMap: Array<{
+      id: string;
+      path: string;
+      isCritical: boolean;
+    }> = [];
+
+    snapshot.dependencies.forEach((dependency: Dependency) => {
+      const sourceIndex = tasks.findIndex((task) => task.id === dependency.sourceTaskId);
+      const targetIndex = tasks.findIndex((task) => task.id === dependency.targetTaskId);
+
+      if (sourceIndex < 0 || targetIndex < 0) {
+        return;
+      }
+
       const sourceTask = tasks[sourceIndex];
       const targetTask = tasks[targetIndex];
-      
-      if (!sourceTask.startDate || !sourceTask.endDate || !targetTask.startDate) return;
-      
-      const sourceEnd = parseIsoDate(sourceTask.endDate);
-      const targetStart = parseIsoDate(targetTask.startDate);
-      
-      const x1 = diffInDays(range.start, sourceEnd) * zoom + zoom - 6;
-      const y1 = sourceIndex * 40 + 13 + (sourceTask.type === 'summary' ? 5 : 0);
-      
-      const x2 = diffInDays(range.start, targetStart) * zoom + 3;
-      const y2 = targetIndex * 40 + 13 + (targetTask.type === 'summary' ? 5 : 0);
-      
-      const isCritical = sourceTask.isCritical && targetTask.isCritical;
-      
-      const midX = x1 + (x2 - x1) / 2;
-      const path = `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`;
-      
-      lineData.push({ path, isCritical, id: dep.id });
+      const path = buildDependencyPath(
+        sourceTask,
+        targetTask,
+        sourceIndex,
+        targetIndex,
+        range.start,
+        zoom
+      );
+
+      if (!path) {
+        return;
+      }
+
+      dependencyMap.push({
+        id: dependency.id,
+        path,
+        isCritical: sourceTask.isCritical && targetTask.isCritical,
+      });
     });
-    
-    return lineData;
-  }, [snapshot.dependencies, tasks, range.start, zoom]);
+
+    return dependencyMap;
+  }, [range.start, snapshot.dependencies, tasks, zoom]);
 
   return (
-    <section className="panel">
+    <section className="panel gantt-panel">
       <div className="panel-header">
         <h3>Gráfico de Gantt</h3>
+
+        <div className="gantt-toolbar">
+          <button
+            className="chip"
+            type="button"
+            onClick={() => usePlannerStore.getState().setZoom(28)}
+          >
+            Compacto
+          </button>
+
+          <button
+            className="chip active"
+            type="button"
+            onClick={() => usePlannerStore.getState().setZoom(36)}
+          >
+            Padrão
+          </button>
+
+          <button
+            className="chip"
+            type="button"
+            onClick={() => usePlannerStore.getState().setZoom(52)}
+          >
+            Detalhado
+          </button>
+        </div>
       </div>
 
       <div className="panel-body gantt-wrap">
-        <div className="gantt-header">
+        <div
+          ref={headerRef}
+          className="gantt-header"
+          onScroll={(event) => {
+            if (bodyRef.current) {
+              bodyRef.current.scrollLeft = event.currentTarget.scrollLeft;
+            }
+          }}
+        >
+          <div className="gantt-month-row" style={{ width: `${canvasWidth}px` }}>
+            {monthSegments.map((segment) => (
+              <div
+                key={`${segment.label}-${segment.width}`}
+                className="gantt-month-cell"
+                style={{ width: `${segment.width}px` }}
+              >
+                {segment.label}
+              </div>
+            ))}
+          </div>
+
           <div className="gantt-header-inner" style={{ width: `${canvasWidth}px` }}>
             {Array.from({ length: totalDays }).map((_, index) => {
               const date = addDays(range.start, index);
               const weekend = isWeekend(date);
+
               return (
-                <div
-                  key={String(index)}
-                  className={`gantt-day ${weekend ? 'weekend' : ''}`}
-                >
+                <div key={index} className={weekend ? 'gantt-day weekend' : 'gantt-day'}>
                   <strong>{formatDayNumber(date)}</strong>
                   <span>{formatDayLabel(date)}</span>
                 </div>
@@ -266,17 +402,36 @@ export function GanttBoard() {
           </div>
         </div>
 
-        <div className="gantt-body">
-          <div className="gantt-canvas" style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}>
+        <div
+          ref={bodyRef}
+          className="gantt-body"
+          onScroll={(event) => {
+            setScrollTop(event.currentTarget.scrollTop);
+
+            if (headerRef.current) {
+              headerRef.current.scrollLeft = event.currentTarget.scrollLeft;
+            }
+          }}
+        >
+          <div
+            className="gantt-canvas"
+            style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}
+          >
             {Array.from({ length: totalDays }).map((_, index) => {
               const date = addDays(range.start, index);
-              if (!isWeekend(date)) return null;
+
+              if (!isWeekend(date)) {
+                return null;
+              }
 
               return (
                 <div
                   key={`weekend-${index}`}
                   className="gantt-weekend"
-                  style={{ left: `${index * zoom}px`, width: `${zoom}px` }}
+                  style={{
+                    left: `${index * zoom}px`,
+                    width: `${zoom}px`,
+                  }}
                 />
               );
             })}
@@ -285,49 +440,182 @@ export function GanttBoard() {
               <div
                 key={`row-${task.id}`}
                 className="gantt-row"
-                style={{ top: `${rowIndex * 40}px` }}
+                style={{ top: `${rowIndex * 44}px` }}
               />
             ))}
 
-            <svg className="gantt-svg-overlay" style={{ width: `${canvasWidth}px`, height: `${canvasHeight}px` }}>
+            <svg className="gantt-links-layer" width={canvasWidth} height={canvasHeight}>
               <defs>
-                <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                  <polygon points="0 0, 6 2, 0 4" fill="#64748b" opacity="0.3" />
+                <marker
+                  id="gantt-arrow-default"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="4"
+                  markerHeight="4"
+                  orient="auto"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#7fd4ff" />
                 </marker>
-                <marker id="arrowhead-critical" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                  <polygon points="0 0, 6 2, 0 4" fill="var(--critical)" opacity="0.8" />
+
+                <marker
+                  id="gantt-arrow-critical"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="4"
+                  markerHeight="4"
+                  orient="auto"
+                >
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff9d7e" />
                 </marker>
               </defs>
+
               {arrows.map((arrow) => (
                 <path
                   key={arrow.id}
                   d={arrow.path}
                   fill="none"
-                  stroke={arrow.isCritical ? 'var(--critical)' : 'rgba(100, 116, 139, 0.2)'}
-                  strokeWidth={arrow.isCritical ? 1.2 : 1}
-                  markerEnd={`url(#${arrow.isCritical ? 'arrowhead-critical' : 'arrowhead'})`}
-                  strokeDasharray={arrow.isCritical ? 'none' : '2,2'}
+                  className={arrow.isCritical ? 'gantt-link critical' : 'gantt-link'}
+                  markerEnd={
+                    arrow.isCritical
+                      ? 'url(#gantt-arrow-critical)'
+                      : 'url(#gantt-arrow-default)'
+                  }
                 />
               ))}
             </svg>
 
-            {todayOffset >= 0 && todayOffset <= canvasWidth && (
-              <div className="gantt-today-line" style={{ left: `${todayOffset}px` }}>
-                <div className="today-label">HOJE</div>
-              </div>
-            )}
+            {todayOffset >= 0 && todayOffset <= canvasWidth ? (
+              <>
+                <div
+                  className="gantt-today-line"
+                  style={{
+                    left: `${todayOffset}px`,
+                  }}
+                />
+                <div
+                  className="gantt-today-badge"
+                  style={{
+                    left: `${todayOffset}px`,
+                  }}
+                >
+                  HOJE
+                </div>
+              </>
+            ) : null}
 
-            {tasks.map((task, rowIndex) => (
-              <GanttBar
-                key={task.id}
-                task={task}
-                rowIndex={rowIndex}
-                range={range}
-                zoom={zoom}
-                isSelected={selectedTaskId === task.id}
-                onSelect={setSelectedTaskId}
-              />
-            ))}
+            {tasks.map((task, rowIndex) => {
+              if (!task.startDate || !task.endDate) {
+                return null;
+              }
+
+              const metrics = getBarMetrics(task, range.start, zoom);
+              const isSelected = selectedTaskId === task.id;
+              const barPreview = preview?.taskId === task.id ? preview : null;
+              const left = barPreview ? barPreview.left : metrics.left;
+              const width = barPreview ? barPreview.width : metrics.width;
+              const top = rowIndex * 44 + (task.type === 'summary' ? 13 : 8);
+
+              const classNames = [
+                'gantt-bar',
+                task.type === 'summary' ? 'summary' : '',
+                task.isCritical ? 'critical' : '',
+                isSelected ? 'selected' : '',
+                dragState?.taskId === task.id ? 'dragging' : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+
+              return (
+                <div
+                  key={task.id}
+                  className="gantt-bar-wrap"
+                  style={{
+                    left: `${left}px`,
+                    width: `${width}px`,
+                    top: `${top}px`,
+                  }}
+                >
+                  <span className="gantt-bar-id">{task.wbsCode}</span>
+
+                  <div
+                    className={classNames}
+                    role="button"
+                    tabIndex={0}
+                    title={task.name}
+                    onClick={() => setSelectedTaskId(task.id)}
+                    onMouseDown={(event) => {
+                      if (task.type === 'summary') {
+                        setSelectedTaskId(task.id);
+                        return;
+                      }
+
+                      event.preventDefault();
+                      event.stopPropagation();
+
+                      setSelectedTaskId(task.id);
+                      setDragState({
+                        taskId: task.id,
+                        mode: 'move',
+                        startX: event.clientX,
+                        initialLeft: metrics.left,
+                        initialWidth: metrics.width,
+                        startDate: task.startDate as string,
+                        durationDays: Math.max(1, task.durationDays),
+                      });
+                      setPreview({
+                        taskId: task.id,
+                        left: metrics.left,
+                        width: metrics.width,
+                      });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        setSelectedTaskId(task.id);
+                      }
+                    }}
+                  >
+                    <div
+                      className="gantt-bar-progress"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, task.progressPercent))}%`,
+                      }}
+                    />
+
+                    <span className="gantt-connector start" />
+                    <span className="gantt-connector end" />
+
+                    {task.type === 'task' ? (
+                      <div
+                        className="gantt-resize-handle"
+                        aria-label="Redimensionar duração da tarefa"
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+
+                          setSelectedTaskId(task.id);
+                          setDragState({
+                            taskId: task.id,
+                            mode: 'resize-right',
+                            startX: event.clientX,
+                            initialLeft: metrics.left,
+                            initialWidth: metrics.width,
+                            startDate: task.startDate as string,
+                            durationDays: Math.max(1, task.durationDays),
+                          });
+                          setPreview({
+                            taskId: task.id,
+                            left: metrics.left,
+                            width: metrics.width,
+                          });
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
