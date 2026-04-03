@@ -1,0 +1,27 @@
+{
+  "name": "obraflow-planner",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SaaS de planejamento de obras com gráfico de Gantt interativo, importação de planilhas e calendário brasileiro.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  }
+}

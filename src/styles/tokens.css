@@ -1,0 +1,20 @@
+:root {
+  --bg: #08111d;
+  --bg-soft: #0b1627;
+  --panel: #12203a;
+  --panel-soft: rgba(255, 255, 255, 0.04);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.04);
+  --text: #ecf4ff;
+  --text-muted: #9fb2cf;
+  --primary: #1e90ff;
+  --secondary: #7c68ff;
+  --success: #17c964;
+  --critical: #ff7a59;
+  --weekend: rgba(255, 255, 255, 0.05);
+  --shadow-lg: 0 18px 60px rgba(0, 0, 0, 0.35);
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+  --row-height: 44px;
+}

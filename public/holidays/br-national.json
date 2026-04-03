@@ -1,0 +1,10 @@
+[
+  { "id": "br-2026-01-01", "name": "Confraternização Universal", "date": "2026-01-01", "scope": "national", "recurring": true },
+  { "id": "br-2026-04-21", "name": "Tiradentes", "date": "2026-04-21", "scope": "national", "recurring": true },
+  { "id": "br-2026-05-01", "name": "Dia do Trabalho", "date": "2026-05-01", "scope": "national", "recurring": true },
+  { "id": "br-2026-09-07", "name": "Independência do Brasil", "date": "2026-09-07", "scope": "national", "recurring": true },
+  { "id": "br-2026-10-12", "name": "Nossa Senhora Aparecida", "date": "2026-10-12", "scope": "national", "recurring": true },
+  { "id": "br-2026-11-02", "name": "Finados", "date": "2026-11-02", "scope": "national", "recurring": true },
+  { "id": "br-2026-11-15", "name": "Proclamação da República", "date": "2026-11-15", "scope": "national", "recurring": true },
+  { "id": "br-2026-12-25", "name": "Natal", "date": "2026-12-25", "scope": "national", "recurring": true }
+]
