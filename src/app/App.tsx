@@ -33,7 +33,7 @@ export default function App() {
     dividerDragRef.current = null;
     window.removeEventListener('mousemove', handleWindowMouseMove);
     window.removeEventListener('mouseup', handleWindowMouseUp);
-  }, [handleWindowMouseMove, handleWindowMouseUp]);
+  }, [handleWindowMouseMove]);
 
   useEffect(() => {
     return () => {
