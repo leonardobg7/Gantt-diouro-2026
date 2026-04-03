@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { PlannerSnapshot, Task } from '@/types';
+import type { PlannerSnapshot, Task, Dependency } from '@/types';
 import { markCriticalPath } from '@/modules/planner/domain/services/critical-path-engine';
 import {
   applyDependencies,
@@ -8,6 +8,7 @@ import {
 import { rebuildWbsCodes } from '@/modules/planner/domain/services/hierarchy-engine';
 import { recalculateSchedule } from '@/modules/planner/domain/services/schedule-engine';
 import { sampleSnapshot } from '@/mock/sample-project';
+import { parsePredecessorString } from '@/modules/planner/domain/services/dependency-parser';
 
 interface PlannerState {
   snapshot: PlannerSnapshot;
@@ -23,6 +24,7 @@ interface PlannerState {
   updateColumnWidth: (index: number, width: number) => void;
   resetToSample: () => void;
   updateTask: (taskId: string, patch: Partial<Task>) => void;
+  updatePredecessors: (taskId: string, predecessorString: string) => void;
   replaceSnapshot: (snapshot: PlannerSnapshot) => void;
 }
 
@@ -125,6 +127,40 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       const nextSnapshot = deriveSnapshot({
         ...state.snapshot,
         tasks: nextTasks,
+      });
+
+      return {
+        snapshot: nextSnapshot,
+      };
+    }),
+
+  updatePredecessors: (taskId, predecessorString) =>
+    set((state) => {
+      const newIncomingDependencies = parsePredecessorString(
+        predecessorString,
+        taskId,
+        state.snapshot.tasks,
+        state.snapshot
+      );
+
+      // Filter out old incoming dependencies for this task
+      const otherDependencies = state.snapshot.dependencies.filter(
+        (dep) => dep.targetTaskId !== taskId
+      );
+
+      const nextDependencies = [...otherDependencies, ...newIncomingDependencies];
+
+      // Validate cycle detection before applying
+      const cycleDetected = detectDependencyCycles(state.snapshot.tasks, nextDependencies);
+
+      if (cycleDetected) {
+        console.warn('Dependency cycle detected, rejecting update.');
+        return state;
+      }
+
+      const nextSnapshot = deriveSnapshot({
+        ...state.snapshot,
+        dependencies: nextDependencies,
       });
 
       return {

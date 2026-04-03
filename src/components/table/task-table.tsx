@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getTaskDepth, sortTasksByHierarchy } from '@/modules/planner/domain/services/hierarchy-engine';
 import { usePlannerStore } from '@/modules/planner/state/planner-store';
+import { formatPredecessorString } from '@/modules/planner/domain/services/dependency-parser';
 
 function formatDate(value?: string): string {
   if (!value) {
@@ -28,39 +29,6 @@ function toIsoDate(value: string): string {
   }
 
   return trimmed;
-}
-
-function buildPredecessorText(
-  taskId: string,
-  dependencies: Array<{
-    sourceTaskId: string;
-    targetTaskId: string;
-    type: string;
-    lagDays: number;
-  }>,
-  tasks: Array<{ id: string; wbsCode: string }>
-): string {
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const incoming = dependencies.filter((dependency) => dependency.targetTaskId === taskId);
-
-  if (incoming.length === 0) {
-    return '—';
-  }
-
-  return incoming
-    .map((dependency) => {
-      const source = taskById.get(dependency.sourceTaskId);
-      const sourceCode = source?.wbsCode ?? dependency.sourceTaskId;
-      const lag =
-        dependency.lagDays === 0
-          ? ''
-          : dependency.lagDays > 0
-            ? `+${dependency.lagDays}`
-            : `${dependency.lagDays}`;
-
-      return `${sourceCode} ${dependency.type}${lag}`;
-    })
-    .join(', ');
 }
 
 interface EditableCellProps {
@@ -183,6 +151,7 @@ export function TaskTable() {
   const selectedTaskId = usePlannerStore((state) => state.selectedTaskId);
   const setSelectedTaskId = usePlannerStore((state) => state.setSelectedTaskId);
   const updateTask = usePlannerStore((state) => state.updateTask);
+  const updatePredecessors = usePlannerStore((state) => state.updatePredecessors);
   const columnWidths = usePlannerStore((state) => state.columnWidths);
   const scrollTop = usePlannerStore((state) => state.scrollTop);
   const setScrollTop = usePlannerStore((state) => state.setScrollTop);
@@ -229,7 +198,7 @@ export function TaskTable() {
             const depth = getTaskDepth(orderedTasks, task.id);
             const isSelected = selectedTaskId === task.id;
             const isSummary = task.type === 'summary';
-            const predecessorText = buildPredecessorText(
+            const predecessorText = formatPredecessorString(
               task.id,
               snapshot.dependencies,
               orderedTasks
@@ -321,7 +290,14 @@ export function TaskTable() {
                 </div>
 
                 <div className="task-table-cell">
-                  <span className="static-value predecessor-text">{predecessorText}</span>
+                  {isSummary ? (
+                    <span className="static-value predecessor-text">{predecessorText}</span>
+                  ) : (
+                    <EditableCell
+                      value={predecessorText}
+                      onSave={(newValue) => updatePredecessors(task.id, newValue)}
+                    />
+                  )}
                 </div>
               </div>
             );

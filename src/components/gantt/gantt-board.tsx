@@ -483,11 +483,14 @@ export function GanttBoard() {
               const barPreview = preview?.taskId === task.id ? preview : null;
               const left = barPreview ? barPreview.left : metrics.left;
               const width = barPreview ? barPreview.width : metrics.width;
-              const top = rowIndex * ROW_HEIGHT + (task.type === 'summary' ? 13 : 8);
+              
+              const isSummary = task.type === 'summary';
+              const top = rowIndex * ROW_HEIGHT + (isSummary ? 16 : 8);
+              const height = isSummary ? 16 : 28;
 
               const classNames = [
                 'gantt-bar',
-                task.type === 'summary' ? 'summary' : '',
+                isSummary ? 'summary' : '',
                 task.isCritical ? 'critical' : '',
                 selectedTaskId === task.id ? 'selected' : '',
                 dragState?.taskId === task.id ? 'dragging' : '',
@@ -499,7 +502,7 @@ export function GanttBoard() {
                 <div
                   key={task.id}
                   className="gantt-bar-wrap"
-                  style={{ left: `${left}px`, width: `${width}px`, top: `${top}px` }}
+                  style={{ left: `${left}px`, width: `${width}px`, top: `${top}px`, height: `${height}px` }}
                 >
                   <span className="gantt-bar-id">{task.wbsCode}</span>
 
@@ -510,7 +513,7 @@ export function GanttBoard() {
                     tabIndex={0}
                     onClick={() => setSelectedTaskId(task.id)}
                     onMouseDown={(event) => {
-                      if (task.type === 'summary') {
+                      if (isSummary) {
                         setSelectedTaskId(task.id);
                         return;
                       }
@@ -543,10 +546,19 @@ export function GanttBoard() {
                       }}
                     />
 
-                    <span className="gantt-connector start" />
-                    <span className="gantt-connector end" />
+                    {isSummary ? (
+                      <>
+                        <div className="summary-delimiter start" />
+                        <div className="summary-delimiter end" />
+                      </>
+                    ) : (
+                      <>
+                        <span className="gantt-connector start" />
+                        <span className="gantt-connector end" />
+                      </>
+                    )}
 
-                    {task.type === 'task' ? (
+                    {!isSummary && task.type === 'task' ? (
                       <div
                         className="gantt-resize-handle"
                         aria-label="Redimensionar duração"
