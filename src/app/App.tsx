@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { GanttBoard } from '@/components/gantt/gantt-board';
 import { TaskTable } from '@/components/table/task-table';
 import { usePlannerStore } from '@/modules/planner/state/planner-store';
@@ -9,57 +10,67 @@ export default function App() {
   const setLeftPanelWidth = usePlannerStore((state) => state.setLeftPanelWidth);
   const resetToSample = usePlannerStore((state) => state.resetToSample);
 
-  const dragStateRef = useRef<{
+  const dividerDragRef = useRef<{
     startX: number;
     startWidth: number;
   } | null>(null);
 
-  const handleMouseMove = useCallback(
+  const handleWindowMouseMove = useCallback(
     (event: MouseEvent) => {
-      const dragState = dragStateRef.current;
+      const dragState = dividerDragRef.current;
       if (!dragState) {
         return;
       }
 
       const delta = event.clientX - dragState.startX;
-      const nextWidth = Math.max(420, Math.min(920, dragState.startWidth + delta));
+      const nextWidth = Math.max(520, Math.min(1120, dragState.startWidth + delta));
       setLeftPanelWidth(nextWidth);
     },
     [setLeftPanelWidth]
   );
 
-  const handleMouseUp = useCallback(() => {
-    dragStateRef.current = null;
-    window.removeEventListener('mousemove', handleMouseMove);
-    window.removeEventListener('mouseup', handleMouseUp);
-  }, [handleMouseMove]);
+  const handleWindowMouseUp = useCallback(() => {
+    dividerDragRef.current = null;
+    window.removeEventListener('mousemove', handleWindowMouseMove);
+    window.removeEventListener('mouseup', handleWindowMouseUp);
+  }, [handleWindowMouseMove, handleWindowMouseUp]);
 
   useEffect(() => {
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [handleMouseMove, handleMouseUp]);
+  }, [handleWindowMouseMove, handleWindowMouseUp]);
 
-  const handleDividerMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+  const handleDividerMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    dragStateRef.current = {
+
+    dividerDragRef.current = {
       startX: event.clientX,
       startWidth: leftPanelWidth,
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
   };
 
-  const leafTasks = snapshot.tasks.filter((task) => task.type !== 'summary');
-  const criticalCount = leafTasks.filter((task) => task.isCritical).length;
-  const avgProgress =
-    leafTasks.length > 0
-      ? Math.round(
-          leafTasks.reduce((sum, task) => sum + task.progressPercent, 0) / leafTasks.length
-        )
-      : 0;
+  const stats = useMemo(() => {
+    const leafTasks = snapshot.tasks.filter((task) => task.type !== 'summary');
+    const criticalTasks = leafTasks.filter((task) => task.isCritical);
+
+    const averageProgress =
+      leafTasks.length > 0
+        ? Math.round(
+            leafTasks.reduce((sum, task) => sum + task.progressPercent, 0) / leafTasks.length
+          )
+        : 0;
+
+    return {
+      taskCount: leafTasks.length,
+      criticalCount: criticalTasks.length,
+      averageProgress,
+    };
+  }, [snapshot.tasks]);
 
   return (
     <div className="app-shell">
@@ -94,25 +105,25 @@ export default function App() {
             <div className="hero-badge">Projeto ativo</div>
             <h2>{snapshot.project.name}</h2>
             <p>
-              Cronograma executivo com hierarquia, dias úteis, predecessoras, caminho
-              crítico e visual premium em tema dark-blue.
+              Estrutura profissional com suporte a dependências (FS, SS, FF, SF),
+              cálculo automático de datas, caminho crítico e visual premium.
             </p>
           </div>
 
           <div className="hero-stats">
             <div className="stat-card">
               <span>Tarefas</span>
-              <strong>{leafTasks.length}</strong>
+              <strong>{stats.taskCount}</strong>
             </div>
 
             <div className="stat-card">
               <span>Críticas</span>
-              <strong>{criticalCount}</strong>
+              <strong>{stats.criticalCount}</strong>
             </div>
 
             <div className="stat-card">
-              <span>Avanço</span>
-              <strong>{avgProgress}%</strong>
+              <span>Progresso</span>
+              <strong>{stats.averageProgress}%</strong>
             </div>
           </div>
         </div>
@@ -132,8 +143,8 @@ export default function App() {
           className="planner-divider"
           onMouseDown={handleDividerMouseDown}
           role="separator"
-          aria-label="Redimensionar tabela e Gantt"
           aria-orientation="vertical"
+          aria-label="Redimensionar planilha do cronograma"
         />
 
         <GanttBoard />

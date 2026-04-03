@@ -7,6 +7,8 @@ import {
   shiftWorkingDate,
 } from '@/modules/planner/domain/services/working-days-engine';
 
+const ROW_HEIGHT = 44;
+
 function parseIsoDate(value: string): Date {
   const [year, month, day] = value.split('-').map(Number);
   return new Date(year || 2000, (month || 1) - 1, day || 1, 12, 0, 0, 0);
@@ -80,10 +82,7 @@ function buildMonthSegments(start: Date, totalDays: number, zoom: number) {
 
     if (month !== currentMonth || year !== currentYear) {
       if (currentWidth > 0) {
-        segments.push({
-          label: currentLabel,
-          width: currentWidth,
-        });
+        segments.push({ label: currentLabel, width: currentWidth });
       }
 
       currentMonth = month;
@@ -96,10 +95,7 @@ function buildMonthSegments(start: Date, totalDays: number, zoom: number) {
   }
 
   if (currentWidth > 0) {
-    segments.push({
-      label: currentLabel,
-      width: currentWidth,
-    });
+    segments.push({ label: currentLabel, width: currentWidth });
   }
 
   return segments;
@@ -142,26 +138,18 @@ function buildDependencyPath(
     return null;
   }
 
-  const sourceEnd = parseIsoDate(sourceTask.endDate);
-  const targetStart = parseIsoDate(targetTask.startDate);
-
   const sourceMetrics = getBarMetrics(sourceTask, rangeStart, zoom);
   const targetMetrics = getBarMetrics(targetTask, rangeStart, zoom);
 
   const x1 = sourceMetrics.left + sourceMetrics.width;
-  const y1 = sourceIndex * 44 + 22;
+  const y1 = sourceIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
   const x2 = targetMetrics.left;
-  const y2 = targetIndex * 44 + 22;
+  const y2 = targetIndex * ROW_HEIGHT + ROW_HEIGHT / 2;
   const midX = x1 + Math.max(18, Math.min(72, (x2 - x1) / 2));
 
-  const path = [
-    `M ${x1} ${y1}`,
-    `L ${midX} ${y1}`,
-    `L ${midX} ${y2}`,
-    `L ${x2 - 6} ${y2}`,
-  ].join(' ');
-
-  return path;
+  return [`M ${x1} ${y1}`, `L ${midX} ${y1}`, `L ${midX} ${y2}`, `L ${x2 - 6} ${y2}`].join(
+    ' '
+  );
 }
 
 export function GanttBoard() {
@@ -186,7 +174,7 @@ export function GanttBoard() {
 
   const totalDays = diffInDays(range.start, range.end) + 1;
   const canvasWidth = totalDays * zoom;
-  const canvasHeight = tasks.length * 44 + 20;
+  const canvasHeight = tasks.length * ROW_HEIGHT + 20;
   const monthSegments = useMemo(
     () => buildMonthSegments(range.start, totalDays, zoom),
     [range.start, totalDays, zoom]
@@ -217,7 +205,6 @@ export function GanttBoard() {
           left: dragState.initialLeft + snappedDelta,
           width: dragState.initialWidth,
         });
-
         return;
       }
 
@@ -294,11 +281,7 @@ export function GanttBoard() {
   const todayOffset = diffInDays(range.start, today) * zoom;
 
   const arrows = useMemo(() => {
-    const dependencyMap: Array<{
-      id: string;
-      path: string;
-      isCritical: boolean;
-    }> = [];
+    const rows: Array<{ id: string; path: string; isCritical: boolean }> = [];
 
     snapshot.dependencies.forEach((dependency: Dependency) => {
       const sourceIndex = tasks.findIndex((task) => task.id === dependency.sourceTaskId);
@@ -323,14 +306,14 @@ export function GanttBoard() {
         return;
       }
 
-      dependencyMap.push({
+      rows.push({
         id: dependency.id,
         path,
         isCritical: sourceTask.isCritical && targetTask.isCritical,
       });
     });
 
-    return dependencyMap;
+    return rows;
   }, [range.start, snapshot.dependencies, tasks, zoom]);
 
   return (
@@ -376,9 +359,9 @@ export function GanttBoard() {
           }}
         >
           <div className="gantt-month-row" style={{ width: `${canvasWidth}px` }}>
-            {monthSegments.map((segment) => (
+            {monthSegments.map((segment, index) => (
               <div
-                key={`${segment.label}-${segment.width}`}
+                key={`${segment.label}-${index}`}
                 className="gantt-month-cell"
                 style={{ width: `${segment.width}px` }}
               >
@@ -428,10 +411,7 @@ export function GanttBoard() {
                 <div
                   key={`weekend-${index}`}
                   className="gantt-weekend"
-                  style={{
-                    left: `${index * zoom}px`,
-                    width: `${zoom}px`,
-                  }}
+                  style={{ left: `${index * zoom}px`, width: `${zoom}px` }}
                 />
               );
             })}
@@ -440,7 +420,7 @@ export function GanttBoard() {
               <div
                 key={`row-${task.id}`}
                 className="gantt-row"
-                style={{ top: `${rowIndex * 44}px` }}
+                style={{ top: `${rowIndex * ROW_HEIGHT}px` }}
               />
             ))}
 
@@ -475,7 +455,6 @@ export function GanttBoard() {
                 <path
                   key={arrow.id}
                   d={arrow.path}
-                  fill="none"
                   className={arrow.isCritical ? 'gantt-link critical' : 'gantt-link'}
                   markerEnd={
                     arrow.isCritical
@@ -488,18 +467,8 @@ export function GanttBoard() {
 
             {todayOffset >= 0 && todayOffset <= canvasWidth ? (
               <>
-                <div
-                  className="gantt-today-line"
-                  style={{
-                    left: `${todayOffset}px`,
-                  }}
-                />
-                <div
-                  className="gantt-today-badge"
-                  style={{
-                    left: `${todayOffset}px`,
-                  }}
-                >
+                <div className="gantt-today-line" style={{ left: `${todayOffset}px` }} />
+                <div className="gantt-today-badge" style={{ left: `${todayOffset}px` }}>
                   HOJE
                 </div>
               </>
@@ -511,17 +480,16 @@ export function GanttBoard() {
               }
 
               const metrics = getBarMetrics(task, range.start, zoom);
-              const isSelected = selectedTaskId === task.id;
               const barPreview = preview?.taskId === task.id ? preview : null;
               const left = barPreview ? barPreview.left : metrics.left;
               const width = barPreview ? barPreview.width : metrics.width;
-              const top = rowIndex * 44 + (task.type === 'summary' ? 13 : 8);
+              const top = rowIndex * ROW_HEIGHT + (task.type === 'summary' ? 13 : 8);
 
               const classNames = [
                 'gantt-bar',
                 task.type === 'summary' ? 'summary' : '',
                 task.isCritical ? 'critical' : '',
-                isSelected ? 'selected' : '',
+                selectedTaskId === task.id ? 'selected' : '',
                 dragState?.taskId === task.id ? 'dragging' : '',
               ]
                 .filter(Boolean)
@@ -531,19 +499,15 @@ export function GanttBoard() {
                 <div
                   key={task.id}
                   className="gantt-bar-wrap"
-                  style={{
-                    left: `${left}px`,
-                    width: `${width}px`,
-                    top: `${top}px`,
-                  }}
+                  style={{ left: `${left}px`, width: `${width}px`, top: `${top}px` }}
                 >
                   <span className="gantt-bar-id">{task.wbsCode}</span>
 
                   <div
                     className={classNames}
+                    title={task.name}
                     role="button"
                     tabIndex={0}
-                    title={task.name}
                     onClick={() => setSelectedTaskId(task.id)}
                     onMouseDown={(event) => {
                       if (task.type === 'summary') {
@@ -564,16 +528,12 @@ export function GanttBoard() {
                         startDate: task.startDate as string,
                         durationDays: Math.max(1, task.durationDays),
                       });
+
                       setPreview({
                         taskId: task.id,
                         left: metrics.left,
                         width: metrics.width,
                       });
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        setSelectedTaskId(task.id);
-                      }
                     }}
                   >
                     <div
@@ -589,7 +549,7 @@ export function GanttBoard() {
                     {task.type === 'task' ? (
                       <div
                         className="gantt-resize-handle"
-                        aria-label="Redimensionar duração da tarefa"
+                        aria-label="Redimensionar duração"
                         onMouseDown={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
@@ -604,6 +564,7 @@ export function GanttBoard() {
                             startDate: task.startDate as string,
                             durationDays: Math.max(1, task.durationDays),
                           });
+
                           setPreview({
                             taskId: task.id,
                             left: metrics.left,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getTaskDepth, sortTasksByHierarchy } from '@/modules/planner/domain/services/hierarchy-engine';
 import { usePlannerStore } from '@/modules/planner/state/planner-store';
 
@@ -30,12 +30,16 @@ function toIsoDate(value: string): string {
   return trimmed;
 }
 
-function buildPredecessorText(taskId: string, dependencies: Array<{
-  sourceTaskId: string;
-  targetTaskId: string;
-  type: string;
-  lagDays: number;
-}>, tasks: Array<{ id: string; wbsCode: string }>): string {
+function buildPredecessorText(
+  taskId: string,
+  dependencies: Array<{
+    sourceTaskId: string;
+    targetTaskId: string;
+    type: string;
+    lagDays: number;
+  }>,
+  tasks: Array<{ id: string; wbsCode: string }>
+): string {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const incoming = dependencies.filter((dependency) => dependency.targetTaskId === taskId);
 
@@ -143,11 +147,7 @@ function EditableCell({
   );
 }
 
-interface ColResizerProps {
-  index: number;
-}
-
-function ColResizer({ index }: ColResizerProps) {
+function ColResizer({ index }: { index: number }) {
   const updateColumnWidth = usePlannerStore((state) => state.updateColumnWidth);
   const columnWidths = usePlannerStore((state) => state.columnWidths);
 
@@ -160,9 +160,8 @@ function ColResizer({ index }: ColResizerProps) {
       const startWidth = columnWidths[index];
 
       const handleMouseMove = (mouseEvent: MouseEvent) => {
-        const currentX = mouseEvent.pageX;
-        const newWidth = Math.max(56, startWidth + (currentX - startX));
-        updateColumnWidth(index, newWidth);
+        const nextWidth = Math.max(56, startWidth + (mouseEvent.pageX - startX));
+        updateColumnWidth(index, nextWidth);
       };
 
       const handleMouseUp = () => {
@@ -200,7 +199,7 @@ export function TaskTable() {
     }
   }, [scrollTop]);
 
-  const orderedTasks = sortTasksByHierarchy(snapshot.tasks);
+  const orderedTasks = useMemo(() => sortTasksByHierarchy(snapshot.tasks), [snapshot.tasks]);
   const gridTemplate = columnWidths.map((width) => `${width}px`).join(' ');
   const headers = ['ID', 'Tarefa', 'Dur.', 'Início', 'Término', '%', 'Predecessoras'];
 
