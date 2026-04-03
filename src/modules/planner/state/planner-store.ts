@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Dependency, PlannerSnapshot, Task } from '@/types';
+import type { Dependency, PlannerSnapshot, Task, TaskType } from '@/types';
 import { markCriticalPath } from '@/modules/planner/domain/services/critical-path-engine';
 import {
   applyDependencies,
@@ -29,7 +29,11 @@ interface PlannerState {
     linkType: 'FS' | 'SS' | 'FF' | 'SF'
   ) => void;
   addTaskAfterSelected: (kind?: 'task' | 'milestone') => void;
+  addChildTask: (kind?: 'task' | 'milestone') => void;
   removeSelectedTask: () => void;
+  convertSelectedTaskType: (nextType: TaskType) => void;
+  indentSelectedTask: () => void;
+  outdentSelectedTask: () => void;
   replaceSnapshot: (snapshot: PlannerSnapshot) => void;
 }
 
@@ -75,6 +79,28 @@ function getDescendantIds(tasks: Task[], parentId: string): string[] {
   return directChildren.flatMap((child) => [child.id, ...getDescendantIds(tasks, child.id)]);
 }
 
+function getMaxOrderIndex(tasks: Task[], parentId: string | null): number {
+  const siblings = tasks.filter((task) => task.parentId === parentId);
+  if (siblings.length === 0) return -1;
+  return Math.max(...siblings.map((task) => task.orderIndex));
+}
+
+function shiftSiblingsForward(
+  tasks: Task[],
+  parentId: string | null,
+  fromOrderIndex: number
+): Task[] {
+  return tasks.map((task) => {
+    if (task.parentId === parentId && task.orderIndex >= fromOrderIndex) {
+      return {
+        ...task,
+        orderIndex: task.orderIndex + 1,
+      };
+    }
+    return task;
+  });
+}
+
 const initialSnapshot = deriveSnapshot(sampleSnapshot);
 
 export const usePlannerStore = create<PlannerState>((set) => ({
@@ -100,7 +126,7 @@ export const usePlannerStore = create<PlannerState>((set) => ({
 
   setLeftPanelWidth: (width) =>
     set({
-      leftPanelWidth: Math.max(560, Math.min(1180, width)),
+      leftPanelWidth: Math.max(620, Math.min(1220, width)),
     }),
 
   updateColumnWidth: (index, width) =>
@@ -146,14 +172,17 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       const tasks = state.snapshot.tasks;
       const dependencies = state.snapshot.dependencies;
 
-      const targetTask = tasks.find((task) => task.id === taskId);
-      if (!targetTask) return state;
+      const validLinkType: 'FS' | 'SS' | 'FF' | 'SF' = ['FS', 'SS', 'FF', 'SF'].includes(
+        linkType
+      )
+        ? linkType
+        : 'FS';
 
       const remainingDependencies = dependencies.filter(
         (dependency) => dependency.targetTaskId !== taskId
       );
 
-      if (!trimmedWbs) {
+      if (!trimmedWbs || trimmedWbs === '—') {
         return {
           snapshot: deriveSnapshot({
             ...state.snapshot,
@@ -172,7 +201,7 @@ export const usePlannerStore = create<PlannerState>((set) => ({
         projectId: state.snapshot.project.id,
         sourceTaskId: sourceTask.id,
         targetTaskId: taskId,
-        type: linkType,
+        type: validLinkType,
         lagDays: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -204,12 +233,7 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       const parentId = selectedTask?.parentId ?? null;
       const insertOrderIndex = selectedTask ? selectedTask.orderIndex + 1 : 0;
 
-      const shiftedTasks = tasks.map((task) => {
-        if (task.parentId === parentId && task.orderIndex >= insertOrderIndex) {
-          return { ...task, orderIndex: task.orderIndex + 1 };
-        }
-        return task;
-      });
+      const shiftedTasks = shiftSiblingsForward(tasks, parentId, insertOrderIndex);
 
       const baseDate =
         selectedTask?.endDate ||
@@ -249,6 +273,53 @@ export const usePlannerStore = create<PlannerState>((set) => ({
       };
     }),
 
+  addChildTask: (kind = 'task') =>
+    set((state) => {
+      const tasks = [...state.snapshot.tasks];
+      const selectedTask = tasks.find((task) => task.id === state.selectedTaskId);
+
+      if (!selectedTask) return state;
+
+      const parentId = selectedTask.id;
+      const orderIndex = getMaxOrderIndex(tasks, parentId) + 1;
+      const baseDate =
+        selectedTask.startDate ||
+        selectedTask.endDate ||
+        state.snapshot.project.startDate ||
+        new Date().toISOString().slice(0, 10);
+
+      const now = new Date().toISOString();
+      const newTask: Task = {
+        id: createId('task'),
+        projectId: state.snapshot.project.id,
+        wbsCode: '',
+        name: kind === 'milestone' ? 'Novo marco' : 'Nova subtarefa',
+        type: kind,
+        parentId,
+        orderIndex,
+        startDate: baseDate,
+        endDate: baseDate,
+        durationDays: kind === 'milestone' ? 0 : 1,
+        progressPercent: 0,
+        isCritical: false,
+        calendarId: state.snapshot.calendar.id,
+        notes: '',
+        cost: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const nextSnapshot = deriveSnapshot({
+        ...state.snapshot,
+        tasks: [...tasks, newTask],
+      });
+
+      return {
+        snapshot: nextSnapshot,
+        selectedTaskId: newTask.id,
+      };
+    }),
+
   removeSelectedTask: () =>
     set((state) => {
       if (!state.selectedTaskId) return state;
@@ -271,6 +342,101 @@ export const usePlannerStore = create<PlannerState>((set) => ({
           dependencies: nextDependencies,
         }),
         selectedTaskId: nextTasks[0]?.id ?? null,
+      };
+    }),
+
+  convertSelectedTaskType: (nextType) =>
+    set((state) => {
+      if (!state.selectedTaskId) return state;
+
+      const nextTasks = state.snapshot.tasks.map((task) => {
+        if (task.id !== state.selectedTaskId) return task;
+
+        return {
+          ...task,
+          type: nextType,
+          durationDays: nextType === 'milestone' ? 0 : Math.max(1, task.durationDays || 1),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      return {
+        snapshot: deriveSnapshot({
+          ...state.snapshot,
+          tasks: nextTasks,
+        }),
+      };
+    }),
+
+  indentSelectedTask: () =>
+    set((state) => {
+      if (!state.selectedTaskId) return state;
+
+      const tasks = [...state.snapshot.tasks];
+      const selectedTask = tasks.find((task) => task.id === state.selectedTaskId);
+      if (!selectedTask) return state;
+
+      const siblings = tasks
+        .filter((task) => task.parentId === selectedTask.parentId)
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+
+      const currentIndex = siblings.findIndex((task) => task.id === selectedTask.id);
+      if (currentIndex <= 0) return state;
+
+      const previousSibling = siblings[currentIndex - 1];
+      const newOrderIndex = getMaxOrderIndex(tasks, previousSibling.id) + 1;
+
+      const nextTasks = tasks.map((task) =>
+        task.id === selectedTask.id
+          ? {
+              ...task,
+              parentId: previousSibling.id,
+              orderIndex: newOrderIndex,
+              updatedAt: new Date().toISOString(),
+            }
+          : task
+      );
+
+      return {
+        snapshot: deriveSnapshot({
+          ...state.snapshot,
+          tasks: nextTasks,
+        }),
+      };
+    }),
+
+  outdentSelectedTask: () =>
+    set((state) => {
+      if (!state.selectedTaskId) return state;
+
+      const tasks = [...state.snapshot.tasks];
+      const selectedTask = tasks.find((task) => task.id === state.selectedTaskId);
+      if (!selectedTask || !selectedTask.parentId) return state;
+
+      const parentTask = tasks.find((task) => task.id === selectedTask.parentId);
+      if (!parentTask) return state;
+
+      const newParentId = parentTask.parentId ?? null;
+      const insertOrderIndex = parentTask.orderIndex + 1;
+
+      const shiftedTasks = shiftSiblingsForward(tasks, newParentId, insertOrderIndex);
+
+      const nextTasks = shiftedTasks.map((task) =>
+        task.id === selectedTask.id
+          ? {
+              ...task,
+              parentId: newParentId,
+              orderIndex: insertOrderIndex,
+              updatedAt: new Date().toISOString(),
+            }
+          : task
+      );
+
+      return {
+        snapshot: deriveSnapshot({
+          ...state.snapshot,
+          tasks: nextTasks,
+        }),
       };
     }),
 

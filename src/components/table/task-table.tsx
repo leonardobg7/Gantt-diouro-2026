@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Dependency } from '@/types';
+import type { Dependency, TaskType } from '@/types';
 import { getTaskDepth, sortTasksByHierarchy } from '@/modules/planner/domain/services/hierarchy-engine';
 import { usePlannerStore } from '@/modules/planner/state/planner-store';
 
@@ -116,6 +116,100 @@ function EditableCell({
   );
 }
 
+function PredecessorCell({
+  value,
+  options,
+  onSave,
+}: {
+  value: string;
+  options: string[];
+  onSave: (newValue: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftValue, setDraftValue] = useState(value);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const listId = 'predecessor-wbs-options';
+
+  useEffect(() => {
+    setDraftValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    if (draftValue !== value) {
+      onSave(draftValue);
+    }
+  };
+
+  if (editing) {
+    return (
+      <>
+        <input
+          ref={inputRef}
+          className="cell-input"
+          type="text"
+          value={draftValue}
+          list={listId}
+          onChange={(event) => setDraftValue(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commit();
+            if (event.key === 'Escape') {
+              setDraftValue(value);
+              setEditing(false);
+            }
+          }}
+        />
+
+        <datalist id={listId}>
+          {options.map((option) => (
+            <option key={option} value={option} />
+          ))}
+        </datalist>
+      </>
+    );
+  }
+
+  return (
+    <button
+      className="cell-button"
+      type="button"
+      onDoubleClick={() => setEditing(true)}
+      title="Duplo clique para digitar ou escolher predecessora"
+    >
+      {value || '—'}
+    </button>
+  );
+}
+
+function LinkTypeCell({
+  value,
+  onSave,
+}: {
+  value: 'FS' | 'SS' | 'FF' | 'SF';
+  onSave: (nextValue: 'FS' | 'SS' | 'FF' | 'SF') => void;
+}) {
+  return (
+    <select
+      className="cell-select"
+      value={value}
+      onChange={(event) => onSave(event.target.value as 'FS' | 'SS' | 'FF' | 'SF')}
+    >
+      <option value="FS">FS</option>
+      <option value="SS">SS</option>
+      <option value="FF">FF</option>
+      <option value="SF">SF</option>
+    </select>
+  );
+}
+
 function ColResizer({ index }: { index: number }) {
   const updateColumnWidth = usePlannerStore((state) => state.updateColumnWidth);
   const columnWidths = usePlannerStore((state) => state.columnWidths);
@@ -147,17 +241,74 @@ function ColResizer({ index }: { index: number }) {
   return <div className="col-resizer" onMouseDown={handleMouseDown} aria-hidden="true" />;
 }
 
+function TaskActionsMenu({
+  taskType,
+  onConvertType,
+  onAddChildTask,
+  onAddChildMilestone,
+  onIndent,
+  onOutdent,
+  onRemove,
+}: {
+  taskType: TaskType;
+  onConvertType: (type: TaskType) => void;
+  onAddChildTask: () => void;
+  onAddChildMilestone: () => void;
+  onIndent: () => void;
+  onOutdent: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="task-menu-popup">
+      <button type="button" className="task-menu-item" onClick={() => onConvertType('task')}>
+        Converter em task
+      </button>
+      <button type="button" className="task-menu-item" onClick={() => onConvertType('summary')}>
+        Converter em resumo
+      </button>
+      <button type="button" className="task-menu-item" onClick={() => onConvertType('milestone')}>
+        Converter em marco
+      </button>
+      <button type="button" className="task-menu-item" onClick={onAddChildTask}>
+        Adicionar subtarefa
+      </button>
+      <button type="button" className="task-menu-item" onClick={onAddChildMilestone}>
+        Adicionar sub-marco
+      </button>
+      <button type="button" className="task-menu-item" onClick={onIndent}>
+        Indentar hierarquia
+      </button>
+      <button type="button" className="task-menu-item" onClick={onOutdent}>
+        Desindentar hierarquia
+      </button>
+      <button type="button" className="task-menu-item danger" onClick={onRemove}>
+        Excluir tarefa
+      </button>
+      <div className="task-menu-note">Tipo atual: {taskType}</div>
+    </div>
+  );
+}
+
 export function TaskTable() {
   const snapshot = usePlannerStore((state) => state.snapshot);
   const selectedTaskId = usePlannerStore((state) => state.selectedTaskId);
   const setSelectedTaskId = usePlannerStore((state) => state.setSelectedTaskId);
   const updateTask = usePlannerStore((state) => state.updateTask);
   const updateDependencyInput = usePlannerStore((state) => state.updateDependencyInput);
+  const addTaskAfterSelected = usePlannerStore((state) => state.addTaskAfterSelected);
+  const addChildTask = usePlannerStore((state) => state.addChildTask);
+  const removeSelectedTask = usePlannerStore((state) => state.removeSelectedTask);
+  const convertSelectedTaskType = usePlannerStore((state) => state.convertSelectedTaskType);
+  const indentSelectedTask = usePlannerStore((state) => state.indentSelectedTask);
+  const outdentSelectedTask = usePlannerStore((state) => state.outdentSelectedTask);
   const columnWidths = usePlannerStore((state) => state.columnWidths);
   const scrollTop = usePlannerStore((state) => state.scrollTop);
   const setScrollTop = usePlannerStore((state) => state.setScrollTop);
 
+  const [menuTaskId, setMenuTaskId] = useState<string | null>(null);
+
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!bodyRef.current) return;
@@ -167,20 +318,50 @@ export function TaskTable() {
     }
   }, [scrollTop]);
 
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!panelRef.current) return;
+      if (!panelRef.current.contains(event.target as Node)) {
+        setMenuTaskId(null);
+      }
+    };
+
+    window.addEventListener('mousedown', handleOutsideClick);
+    return () => window.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
   const orderedTasks = useMemo(() => sortTasksByHierarchy(snapshot.tasks), [snapshot.tasks]);
   const taskById = useMemo(
     () => new Map(orderedTasks.map((task) => [task.id, task])),
     [orderedTasks]
   );
-  
+  const predecessorOptions = useMemo(
+    () => orderedTasks.map((task) => task.wbsCode).filter(Boolean),
+    [orderedTasks]
+  );
+
   const gridTemplate = columnWidths.map((width) => `${width}px`).join(' ');
   const headers = ['ID', 'Tarefa', 'Dur.', 'Início', 'Término', '%', 'Predecessora', 'Vínculo'];
 
   return (
-    <section className="panel table-panel">
-      <div className="panel-header">
-        <h3>Planilha do cronograma</h3>
-        <span className="panel-subtle">Duplo clique para editar</span>
+    <section ref={panelRef} className="panel table-panel">
+      <div className="panel-header panel-header-table">
+        <div className="panel-header-title">
+          <h3>Planilha do cronograma</h3>
+          <span className="panel-subtle">Duplo clique para editar</span>
+        </div>
+
+        <div className="table-actions">
+          <button className="btn btn-small primary" type="button" onClick={() => addTaskAfterSelected('task')}>
+            + Tarefa
+          </button>
+          <button className="btn btn-small ghost" type="button" onClick={() => addTaskAfterSelected('milestone')}>
+            + Marco
+          </button>
+          <button className="btn btn-small ghost danger" type="button" onClick={removeSelectedTask}>
+            Remover
+          </button>
+        </div>
       </div>
 
       <div className="panel-body table-wrap">
@@ -202,7 +383,6 @@ export function TaskTable() {
             const depth = getTaskDepth(orderedTasks, task.id);
             const isSelected = selectedTaskId === task.id;
             const isSummary = task.type === 'summary';
-            
             const incoming = getIncomingDependency(task.id, snapshot.dependencies);
             const predecessorWbs = incoming
               ? taskById.get(incoming.sourceTaskId)?.wbsCode ?? ''
@@ -215,7 +395,7 @@ export function TaskTable() {
                 className={isSelected ? 'task-table-row selected' : 'task-table-row'}
                 style={{
                   gridTemplateColumns: gridTemplate,
-                  minHeight: `${ROW_HEIGHT}px`,
+                  height: `${ROW_HEIGHT}px`,
                 }}
                 onClick={() => setSelectedTaskId(task.id)}
                 role="button"
@@ -231,15 +411,66 @@ export function TaskTable() {
                 <div className="task-table-cell">
                   <div className="task-name" style={{ paddingLeft: `${depth * 14}px` }}>
                     <span className="depth-dot" />
+
                     <EditableCell
                       value={task.name}
                       onSave={(newValue) => updateTask(task.id, { name: newValue })}
-                      disabled={false}
                     />
+
                     <span className={isSummary ? 'task-tag summary' : 'task-tag'}>
                       {isSummary ? 'Resumo' : task.type === 'milestone' ? 'Marco' : 'Task'}
                     </span>
+
                     {task.isCritical ? <span className="task-tag critical">Crítica</span> : null}
+
+                    <button
+                      type="button"
+                      className="task-actions-trigger"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedTaskId(task.id);
+                        setMenuTaskId((current) => (current === task.id ? null : task.id));
+                      }}
+                      aria-label="Abrir ações da tarefa"
+                    >
+                      ⋯
+                    </button>
+
+                    {menuTaskId === task.id ? (
+                      <TaskActionsMenu
+                        taskType={task.type}
+                        onConvertType={(nextType) => {
+                          setSelectedTaskId(task.id);
+                          convertSelectedTaskType(nextType);
+                          setMenuTaskId(null);
+                        }}
+                        onAddChildTask={() => {
+                          setSelectedTaskId(task.id);
+                          addChildTask('task');
+                          setMenuTaskId(null);
+                        }}
+                        onAddChildMilestone={() => {
+                          setSelectedTaskId(task.id);
+                          addChildTask('milestone');
+                          setMenuTaskId(null);
+                        }}
+                        onIndent={() => {
+                          setSelectedTaskId(task.id);
+                          indentSelectedTask();
+                          setMenuTaskId(null);
+                        }}
+                        onOutdent={() => {
+                          setSelectedTaskId(task.id);
+                          outdentSelectedTask();
+                          setMenuTaskId(null);
+                        }}
+                        onRemove={() => {
+                          setSelectedTaskId(task.id);
+                          removeSelectedTask();
+                          setMenuTaskId(null);
+                        }}
+                      />
+                    ) : null}
                   </div>
                 </div>
 
@@ -297,24 +528,18 @@ export function TaskTable() {
                 </div>
 
                 <div className="task-table-cell">
-                  <EditableCell
-                    value={predecessorWbs || '—'}
-                    onSave={(newValue) =>
-                      updateDependencyInput(task.id, newValue === '—' ? '' : newValue, linkType)
-                    }
+                  <PredecessorCell
+                    value={predecessorWbs}
+                    options={predecessorOptions}
+                    onSave={(newValue) => updateDependencyInput(task.id, newValue, linkType)}
                   />
                 </div>
 
                 <div className="task-table-cell">
-                  <EditableCell
+                  <LinkTypeCell
                     value={linkType}
-                    align="center"
-                    onSave={(newValue) =>
-                      updateDependencyInput(
-                        task.id,
-                        predecessorWbs,
-                        (newValue.toUpperCase() as 'FS' | 'SS' | 'FF' | 'SF')
-                      )
+                    onSave={(nextType) =>
+                      updateDependencyInput(task.id, predecessorWbs, nextType)
                     }
                   />
                 </div>

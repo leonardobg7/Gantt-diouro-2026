@@ -9,8 +9,6 @@ export default function App() {
   const leftPanelWidth = usePlannerStore((state) => state.leftPanelWidth);
   const setLeftPanelWidth = usePlannerStore((state) => state.setLeftPanelWidth);
   const resetToSample = usePlannerStore((state) => state.resetToSample);
-  const addTaskAfterSelected = usePlannerStore((state) => state.addTaskAfterSelected);
-  const removeSelectedTask = usePlannerStore((state) => state.removeSelectedTask);
 
   const dividerDragRef = useRef<{
     startX: number;
@@ -23,7 +21,7 @@ export default function App() {
       if (!dragState) return;
 
       const delta = event.clientX - dragState.startX;
-      const nextWidth = Math.max(560, Math.min(1180, dragState.startWidth + delta));
+      const nextWidth = Math.max(620, Math.min(1220, dragState.startWidth + delta));
       setLeftPanelWidth(nextWidth);
     },
     [setLeftPanelWidth]
@@ -97,18 +95,6 @@ export default function App() {
             Baseline
           </button>
 
-          <button className="btn primary" type="button" onClick={() => addTaskAfterSelected('task')}>
-            + Nova tarefa
-          </button>
-
-          <button className="btn ghost" type="button" onClick={() => addTaskAfterSelected('milestone')}>
-            + Marco
-          </button>
-
-          <button className="btn ghost danger" type="button" onClick={removeSelectedTask}>
-            Remover
-          </button>
-
           <button className="btn ghost" type="button" onClick={resetToSample}>
             Resetar
           </button>
@@ -118,7 +104,8 @@ export default function App() {
       <section className="hero">
         <div className="hero-card">
           <div>
-            <h2>Planejamento executivo — {snapshot.project.name}</h2>
+            <div className="hero-badge">Projeto ativo</div>
+            <h2>{snapshot.project.name}</h2>
             <p>
               Estrutura profissional com suporte a dependências (FS, SS, FF, SF),
               cálculo automático de datas, caminho crítico e visual premium.

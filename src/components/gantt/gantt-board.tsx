@@ -45,14 +45,14 @@ function formatMonthLabel(value: Date): string {
   return value.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 }
 
-function getVisibleRange(tasks: Task[]) {
+function getVisibleRange(tasks: Task[], presetDays: number) {
   const datedTasks = tasks.filter((task) => task.startDate && task.endDate);
 
   if (datedTasks.length === 0) {
     const today = new Date();
     return {
       start: addDays(today, -7),
-      end: addDays(today, 120),
+      end: addDays(today, presetDays),
     };
   }
 
@@ -64,9 +64,13 @@ function getVisibleRange(tasks: Task[]) {
     .map((task) => parseIsoDate(task.endDate as string))
     .sort((a, b) => a.getTime() - b.getTime());
 
+  const start = addDays(starts[0], -3);
+  const latestEnd = addDays(ends[ends.length - 1], 14);
+  const presetEnd = addDays(start, presetDays);
+
   return {
-    start: addDays(starts[0], -3),
-    end: addDays(ends[ends.length - 1], 35),
+    start,
+    end: latestEnd.getTime() > presetEnd.getTime() ? latestEnd : presetEnd,
   };
 }
 
@@ -136,9 +140,7 @@ function buildDependencyPath(
   rangeStart: Date,
   zoom: number
 ) {
-  if (!sourceTask.endDate || !targetTask.startDate) {
-    return null;
-  }
+  if (!sourceTask.endDate || !targetTask.startDate) return null;
 
   const sourceMetrics = getBarMetrics(sourceTask, rangeStart, zoom);
   const targetMetrics = getBarMetrics(targetTask, rangeStart, zoom);
@@ -167,13 +169,21 @@ export function GanttBoard() {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
 
+  const [rangePreset, setRangePreset] = useState<90 | 180 | 360>(180);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [preview, setPreview] = useState<{ taskId: string; left: number; width: number } | null>(
     null
   );
+  const [isPanning, setIsPanning] = useState(false);
+  const panRef = useRef<{
+    startX: number;
+    startY: number;
+    scrollLeft: number;
+    scrollTop: number;
+  } | null>(null);
 
   const tasks = useMemo(() => sortTasksByHierarchy(snapshot.tasks), [snapshot.tasks]);
-  const range = useMemo(() => getVisibleRange(tasks), [tasks]);
+  const range = useMemo(() => getVisibleRange(tasks, rangePreset), [tasks, rangePreset]);
 
   const totalDays = diffInDays(range.start, range.end) + 1;
   const canvasWidth = totalDays * zoom;
@@ -186,10 +196,10 @@ export function GanttBoard() {
   useEffect(() => {
     if (!bodyRef.current) return;
 
-    if (Math.abs(bodyRef.current.scrollTop - scrollTop) > 1) {
+    if (Math.abs(bodyRef.current.scrollTop - scrollTop) > 1 && !isPanning) {
       bodyRef.current.scrollTop = scrollTop;
     }
-  }, [scrollTop]);
+  }, [scrollTop, isPanning]);
 
   useEffect(() => {
     if (!dragState) return;
@@ -276,6 +286,40 @@ export function GanttBoard() {
     };
   }, [dragState, snapshot.calendar, snapshot.holidays, tasks, updateTask, zoom]);
 
+  useEffect(() => {
+    if (!isPanning) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const panState = panRef.current;
+      const body = bodyRef.current;
+      const header = headerRef.current;
+      if (!panState || !body || !header) return;
+
+      const deltaX = event.clientX - panState.startX;
+      const deltaY = event.clientY - panState.startY;
+
+      body.scrollLeft = panState.scrollLeft - deltaX;
+      body.scrollTop = panState.scrollTop - deltaY;
+      header.scrollLeft = body.scrollLeft;
+      setScrollTop(body.scrollTop);
+    };
+
+    const handleMouseUp = () => {
+      setIsPanning(false);
+      panRef.current = null;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isPanning, setScrollTop]);
+
   const today = new Date();
   const todayOffset = diffInDays(range.start, today) * zoom;
 
@@ -313,19 +357,53 @@ export function GanttBoard() {
 
   return (
     <section className="panel gantt-panel">
-      <div className="panel-header">
-        <h3>Gráfico de Gantt</h3>
+      <div className="panel-header gantt-panel-header">
+        <div className="panel-header-title">
+          <h3>Gráfico de Gantt</h3>
+        </div>
 
-        <div className="gantt-toolbar">
-          <button className={zoom === 28 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(28)}>
-            Compacto
-          </button>
-          <button className={zoom === 36 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(36)}>
-            Padrão
-          </button>
-          <button className={zoom === 52 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(52)}>
-            Detalhado
-          </button>
+        <div className="gantt-panel-actions">
+          <div className="gantt-periods">
+            <button
+              className={rangePreset === 90 ? 'chip active' : 'chip'}
+              type="button"
+              onClick={() => setRangePreset(90)}
+            >
+              90 dias
+            </button>
+            <button
+              className={rangePreset === 180 ? 'chip active' : 'chip'}
+              type="button"
+              onClick={() => setRangePreset(180)}
+            >
+              6 meses
+            </button>
+            <button
+              className={rangePreset === 360 ? 'chip active' : 'chip'}
+              type="button"
+              onClick={() => setRangePreset(360)}
+            >
+              12 meses
+            </button>
+          </div>
+
+          <div className="gantt-toolbar">
+            <button className="chip" type="button" onClick={() => setZoom(zoom - 4)}>
+              −
+            </button>
+            <button className={zoom === 28 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(28)}>
+              Compacto
+            </button>
+            <button className={zoom === 36 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(36)}>
+              Padrão
+            </button>
+            <button className={zoom === 52 ? 'chip active' : 'chip'} type="button" onClick={() => setZoom(52)}>
+              Detalhado
+            </button>
+            <button className="chip" type="button" onClick={() => setZoom(zoom + 4)}>
+              +
+            </button>
+          </div>
         </div>
       </div>
 
@@ -368,12 +446,25 @@ export function GanttBoard() {
 
         <div
           ref={bodyRef}
-          className="gantt-body"
+          className={isPanning ? 'gantt-body panning' : 'gantt-body'}
           onWheel={(event) => {
-            if (event.ctrlKey) {
+            if (event.ctrlKey || event.metaKey || event.altKey) {
               event.preventDefault();
               setZoom(zoom + (event.deltaY < 0 ? 4 : -4));
             }
+          }}
+          onMouseDown={(event) => {
+            const target = event.target as HTMLElement;
+            if (target.closest('[data-gantt-interactive="true"]')) return;
+            if (!bodyRef.current || !headerRef.current) return;
+
+            setIsPanning(true);
+            panRef.current = {
+              startX: event.clientX,
+              startY: event.clientY,
+              scrollLeft: bodyRef.current.scrollLeft,
+              scrollTop: bodyRef.current.scrollTop,
+            };
           }}
           onScroll={(event) => {
             setScrollTop(event.currentTarget.scrollTop);
@@ -483,11 +574,17 @@ export function GanttBoard() {
                 <div
                   key={task.id}
                   className="gantt-bar-wrap"
-                  style={{ left: `${left}px`, width: `${width}px`, top: `${top}px`, height: `${barHeight}px` }}
+                  style={{
+                    left: `${left}px`,
+                    width: `${width}px`,
+                    top: `${top}px`,
+                    height: `${barHeight}px`,
+                  }}
                 >
                   <span className="gantt-bar-id">{task.wbsCode}</span>
 
                   <div
+                    data-gantt-interactive="true"
                     className={classNames}
                     title={task.name}
                     role="button"
@@ -534,6 +631,7 @@ export function GanttBoard() {
 
                     {task.type === 'task' ? (
                       <div
+                        data-gantt-interactive="true"
                         className="gantt-resize-handle"
                         aria-label="Redimensionar duração"
                         onMouseDown={(event) => {
