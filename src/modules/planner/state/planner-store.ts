@@ -10,8 +10,10 @@ interface PlannerState {
   snapshot: PlannerSnapshot;
   selectedTaskId: string | null;
   zoom: number;
+  columnWidths: number[];
   setSelectedTaskId: (taskId: string | null) => void;
   setZoom: (zoom: number) => void;
+  updateColumnWidth: (index: number, width: number) => void;
   resetToSample: () => void;
   updateTask: (taskId: string, patch: Partial<Task>) => void;
   replaceSnapshot: (snapshot: PlannerSnapshot) => void;
@@ -54,13 +56,21 @@ export const usePlannerStore = create<PlannerState>((set) => ({
   snapshot: initialSnapshot,
   selectedTaskId: initialSnapshot.tasks[0]?.id ?? null,
   zoom: initialSnapshot.project.defaultZoom,
+  columnWidths: [60, 200, 80, 100, 100, 70],
   setSelectedTaskId: (taskId) => set({ selectedTaskId: taskId }),
   setZoom: (zoom) => set({ zoom }),
+  updateColumnWidth: (index, width) =>
+    set((state) => {
+      const next = [...state.columnWidths];
+      next[index] = width;
+      return { columnWidths: next };
+    }),
   resetToSample: () =>
     set({
       snapshot: deriveSnapshot(sampleSnapshot),
       selectedTaskId: sampleSnapshot.tasks[0]?.id ?? null,
       zoom: sampleSnapshot.project.defaultZoom,
+      columnWidths: [60, 200, 80, 100, 100, 70],
     }),
   updateTask: (taskId, patch) =>
     set((state) => {
